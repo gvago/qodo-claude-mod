@@ -10,7 +10,7 @@
       "name": "qodo-review-pane",
       "source": "./mods/qodo-review-pane",
       "description": "Run Qodo reviews and work through findings in a Claude Code pane.",
-      "version": "0.2.2"
+      "version": "0.2.3"
     }
   ]
 }

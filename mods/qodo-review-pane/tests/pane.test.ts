@@ -50,7 +50,7 @@ test('a populated pane really draws the finding, its action and its collapsed se
     expect(await ui.find({ text: 'Select a finding, inspect it, then draft a fix request. You send the request yourself.' })).toBeDefined()
     expect(await ui.find({ key: 'navigator' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Reviews from another checkout enter the pane' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'Action required · newly reported · Qodo status pending' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'High · newly reported · Qodo status pending' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'hooks/register.js:208' })).toBeDefined()
     expect(await ui.find({ type: 'Markdown', text: 'Adoption never checks the directory the command ran in.' })).toBeDefined()
     expect(await ui.find({ key: 'fix', text: 'Ask Claude to fix this finding' })).toBeDefined()

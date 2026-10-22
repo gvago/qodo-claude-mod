@@ -98,21 +98,19 @@ const DONE = ['completed', 'incomplete', 'stale', 'failed'];
 function origin(data, f) { return Array.isArray(data?.findings) && data.findings.some(x => x?.id === f.id) ? 'new' : 'still open'; }
 // Qodo's action levels, most urgent first; anything unreported sorts last.
 const LEVELS = ['action_required', 'remediation_recommended', 'informational'];
-const LEVEL_TEXT = { action_required: 'Action required', remediation_recommended: 'Remediation recommended', informational: 'Informational' };
+const LEVEL_TEXT = { action_required: 'High', remediation_recommended: 'Medium', informational: 'Low' };
 function level(f) { return String(f.action_level || f.actionLevel || '').toLowerCase(); }
 function levelText(f) { return LEVEL_TEXT[level(f)] || clean(f.action_level || f.actionLevel || 'Level not reported', 60); }
-// The finding the pane opens on: most urgent first, newly reported before carried over.
-function preselect(data, items) {
-  let best = 0, rank = Infinity;
-  items.forEach((f, i) => {
-    const index = LEVELS.indexOf(level(f));
-    const score = (index < 0 ? LEVELS.length : index) * 2 + (origin(data, f) === 'new' ? 0 : 1);
-    if (score < rank) { rank = score; best = i; }
-  });
-  return best;
+// Priority order: High, Medium, Low, then unreported; newly reported before carried over within a
+// level; Qodo's own order breaks ties (stable sort).
+function rank(data, f) {
+  const index = LEVELS.indexOf(level(f));
+  return (index < 0 ? LEVELS.length : index) * 2 + (origin(data, f) === 'new' ? 0 : 1);
 }
-// Replaces the displayed set; an explicit press survives redraws, a new result does not.
-function display(data, items) { findings = items; selected = preselect(data, items); chosen = true; filter = 'all'; opened.evidence = false; opened.raw = false; opened.suggestion = false; }
+function prioritised(data, items) { return items.map((f, i) => [f, i]).sort((a, b) => rank(data, a[0]) - rank(data, b[0]) || a[1] - b[1]).map(([f]) => f); }
+// Replaces the displayed set, most urgent first, and opens on the top row; an explicit press
+// survives redraws, a new result does not.
+function display(data, items) { findings = prioritised(data, items); selected = 0; chosen = true; filter = 'all'; opened.evidence = false; opened.raw = false; opened.suggestion = false; }
 function counts(data, items) {
   const fresh = items.filter(f => origin(data, f) === 'new').length, open = items.length - fresh;
   const resolved = Array.isArray(data.finding_state?.resolved) ? data.finding_state.resolved.length : 0;

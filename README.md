@@ -8,7 +8,7 @@ A Claude Code mod that puts [Qodo](https://www.qodo.ai) code review inside your 
 
 - **`/qodo-pane`** opens a review pane next to your conversation.
 - **Review context is written for you.** The pane summarises your session goals, PR, commits and diff into an editable intent before submitting.
-- **Findings, ranked.** The most urgent new finding opens first. Findings carried over from an earlier review are labelled.
+- **Findings, sorted by priority.** High, then Medium, then Low; new findings before carried-over ones. Carried-over findings are labelled.
 - **Ask Claude to fix this finding** drafts a prompt for one finding. You press Enter. Nothing is edited, committed, dismissed or pushed automatically.
 - **Stale-aware.** If the code changes after a review, results are marked stale and fix actions are disabled until you re-review.
 - **No duplicate charges.** Pane and Claude-launched `qodo review` runs share one gate, so a second review can't start while one is running.

@@ -284,7 +284,7 @@ test('pane -> fix -> re-review -> updated pane', async () => {
   h.setStatus(f => ({ findings: [], finding_state: { complete: true, still_open: [{ ...f, attribution_status: 'open' }], resolved: [] }, meta: { coverage: { complete: true } } }));
   await h.timers[1]();
   assert.match(h.status(), /Completed: no new findings; 1 still open/);
-  assert.match(h.option(0), /^1\/1 \u00b7 Action required \u00b7 carried over \u00b7 Missing validation$/);
+  assert.match(h.option(0), /^1\/1 \u00b7 High \u00b7 carried over \u00b7 Missing validation$/);
   assert.equal(h.calls.filter(a => a[1] === 'review' && a[2] !== 'status').length, 1);
   assert.deepEqual(h.calls.filter(a => a[2] === 'status').map(a => a[3]), ['op-1', 'op-2']);
 });
@@ -305,7 +305,7 @@ test('a fresh session adopts a Claude review without any previous pane review', 
   assert.deepEqual(h.calls.filter(a => a[2] === 'status').map(a => a[3]), ['op-7']);
   assert.equal(h.calls.filter(a => a[1] === 'review' && a[2] !== 'status').length, 0);
   assert.match(h.control('finding-0').props.label, /^> Selected\./);
-  assert.match(h.option(0), /^1\/1 \u00b7 Action required \u00b7 new \u00b7 Missing validation$/);
+  assert.match(h.option(0), /^1\/1 \u00b7 High \u00b7 new \u00b7 Missing validation$/);
   assert.equal(h.control('title').props.children, 'Missing validation');
 });
 
@@ -425,12 +425,40 @@ test('the pane opens on the most urgent newly reported finding', async () => {
     FINDING('f-rec', 'remediation_recommended', 'Tighten the guard'),
     FINDING('f-act', 'action_required', 'Wrong checkout adopted'),
   ]);
-  assert.match(h.control('finding-2').props.label, /^> Selected\./);
+  assert.match(h.control('finding-0').props.label, /^> Selected\./);
   assert.equal(h.control('title').props.children, 'Wrong checkout adopted');
   assert.equal(h.control('file').props.children, 'src/f-act.js:4');
-  // Ranked most urgent first, each row readable on its own.
-  assert.equal(h.option(0), '1/3 · Informational · new · Naming nit');
-  assert.equal(h.option(2), '3/3 · Action required · new · Wrong checkout adopted');
+  // Sorted most urgent first, each row readable on its own.
+  assert.equal(h.option(0), '1/3 · High · new · Wrong checkout adopted');
+  assert.equal(h.option(1), '2/3 · Medium · new · Tighten the guard');
+  assert.equal(h.option(2), '3/3 · Low · new · Naming nit');
+});
+
+test('the list is sorted High > Medium > Low > unreported, new before carried, Qodo order breaking ties', async () => {
+  const h = await populated([
+    FINDING('n-low', 'informational', 'New low'),
+    FINDING('n-odd', 'something_else', 'New unknown'),
+    FINDING('n-high-a', 'action_required', 'New high A'),
+    FINDING('n-med', 'remediation_recommended', 'New medium'),
+    FINDING('n-high-b', 'action_required', 'New high B'),
+  ], [
+    FINDING('c-high', 'action_required', 'Carried high'),
+    FINDING('c-low', 'informational', 'Carried low'),
+  ]);
+  const rows = h.control('navigator').props.children.map((_, i) => h.option(i));
+  assert.deepEqual(rows, [
+    '1/7 · High · new · New high A',
+    '2/7 · High · new · New high B',
+    '3/7 · High · carried over · Carried high',
+    '4/7 · Medium · new · New medium',
+    '5/7 · Low · new · New low',
+    '6/7 · Low · carried over · Carried low',
+    '7/7 · something_else · new · New unknown',
+  ]);
+  assert.equal(h.control('title').props.children, 'New high A');
+  // Filters keep the same order.
+  h.control('filter').props.onSelect('carried');
+  assert.deepEqual(h.control('navigator').props.children.map((_, i) => h.option(i)), ['1/2 · High · carried over · Carried high', '2/2 · Low · carried over · Carried low']);
 });
 
 test('a newly reported finding outranks a carried-over one of the same level', async () => {
@@ -438,7 +466,7 @@ test('a newly reported finding outranks a carried-over one of the same level', a
   assert.equal(h.control('title').props.children, 'Newly reported issue');
   h.control('finding-1').props.onPress();
   assert.equal(h.control('title').props.children, 'Carried over issue');
-  assert.match(h.control('grade').props.children, /^Action required · carried over from an earlier review/);
+  assert.match(h.control('grade').props.children, /^High · carried over from an earlier review/);
   assert.match(h.control('carried').props.children, /Reassess it against the code as it stands/);
   assert.match(h.control('carried').props.children, /never dismisses, hides or marks a finding fixed/);
 });
@@ -554,7 +582,7 @@ test('reported this run and carried over are filtered apart with accurate counts
   assert.equal(h.control('title').props.children, 'Fresh one');
 
   h.control('filter').props.onSelect('carried');
-  assert.deepEqual(h.control('navigator').props.children.map((_, i) => h.option(i)), ['1/1 · Action required · carried over · Old one']);
+  assert.deepEqual(h.control('navigator').props.children.map((_, i) => h.option(i)), ['1/1 · High · carried over · Old one']);
   assert.equal(h.control('title').props.children, 'Old one');
   assert.ok(h.control('carried-note'));
   // A carried-over finding is still actionable: the pane only declines to judge it.

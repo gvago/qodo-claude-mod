@@ -1,6 +1,6 @@
 {
   "name": "qodo-review-pane",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Unofficial Qodo review pane for Claude Code. Run a Qodo review of your working tree, browse findings, and draft a fix request for the one you pick. No automatic edits.",
   "author": {
     "name": "Guy Vago",
