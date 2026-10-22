@@ -1,4 +1,4 @@
-# Qodo Review Pane v0.2.0
+# Qodo Review Pane v0.2.1
 
 Unofficial Claude Code mod, not built or supported by Qodo. Manual Qodo review, readable finding details and a user-sent fix request. No automatic edits, commits, pushes, dismissals or PR writes.
 
@@ -25,7 +25,7 @@ Everything gathered is treated as untrusted source data to be summarised, never 
 
 Fill or adjust Change intent inside the pane, keep or change Target ref, activate Review changes. Qodo submits the working tree plus intent to the existing configured deployment. Closing the pane does not cancel the accepted operation. Collect review recovers the same operation rather than submitting again. Results expire server-side after one hour from completion.
 
-Ask Claude to fix drafts only one finding; you explicitly send it. Existing prompt drafts are preserved. Evidence renders explanation and source citations; suggested fix renders its description, not transport JSON or embedded server instructions.
+Ask Claude to fix drafts only one finding; you explicitly send it. The prompt box receives one plain line (`Fix Qodo finding <id>: <title> (<file>:<line>)`); the full instructions and finding data are attached as hidden context only when you send that line yourself, once. Raw finding text never enters the composer, so URLs and `@`-shaped strings in code snippets cannot be mistaken for mentions. If the code changed between drafting and sending, the attached context says so. Existing prompt drafts are preserved. Evidence renders explanation and source citations; suggested fix renders its description, not transport JSON or embedded server instructions.
 
 ## Lifecycle
 

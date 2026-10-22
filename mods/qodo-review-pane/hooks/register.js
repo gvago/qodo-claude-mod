@@ -13,6 +13,18 @@ let context = null, preparing = false, edited = false, contextNote = '';
 let stamp = 0, preparation = 0, unlocking = false;
 function installIntent(text) { if (intent !== text) { intent = text; stamp += 1; } }
 let active = null, generation = 0, fixing = false, storageBlocked = false;
+// A drafted fix/triage request: the prompt box holds one readable line carrying `tag`; the full
+// instructions ride along as hidden context when that line is sent. Raw finding text never enters
+// the composer, so URLs or @-shaped strings in code snippets cannot turn into mentions.
+let drafted = null;
+function draftLine(kind, f) {
+  const loc = f ? (f.diffReference || f.diff_reference || f.location || {}) : {};
+  const file = clean(loc.file_path || loc.path || '', 200), line = loc.start_line || loc.line;
+  const where = file ? ' (' + file + (line ? ':' + line : '') + ')' : '';
+  const title = f ? clean(f.title, 160).replace(/@/g, '(at)').replace(/https?:\/\/\S+/g, '<url>') : '';
+  return kind === 'fix' ? 'Fix Qodo finding ' + f.id.slice(0, 8) + ': ' + title + where
+    : 'Build a triage page for the open Qodo findings of review ' + String(active?.operation || '').slice(0, 8);
+}
 
 function clean(value, max = 12000) {
   return typeof value === 'string' ? value.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, max) : '';
@@ -560,10 +572,12 @@ async function askFix($) {
     if (!current(job) || job.phase !== 'completed') return;
     if ((await fingerprint($, job)) !== job.snapshot) throw new Error('Code changed before the fix draft. Assess the current code first.');
     if (draft.text?.trim()) throw new Error('Your prompt already has a draft. Send or clear it before requesting a fix.');
-    const result = await $.prompt.fill({ text });
+    const line = draftLine('fix', f);
+    const result = await $.prompt.fill({ text: line });
     if (!result.isFilled) throw new Error('Prompt could not be filled. Preserve the existing draft.');
+    drafted = { tag: line.split(':')[0], context: text, job, snapshot: job.snapshot };
     await $.ui.close({ id: PANE });
-    $.ui.toast('Fix request drafted. Edit it and press Enter yourself.');
+    $.ui.toast('Fix request drafted. Press Enter to send; the finding details are attached.');
   } catch (error) { if (current(job)) { state = 'Error: ' + clean(error.message); await notify($); } }
   finally { fixing = false; }
 }
@@ -586,9 +600,12 @@ async function askTriage($) {
     if (!current(job) || job.phase !== 'completed') return;
     if ((await fingerprint($, job)) !== job.snapshot) throw new Error('Code changed before the triage draft. Review again first.');
     if (draft.text?.trim()) throw new Error('Your prompt already has a draft. Send or clear it first.');
-    const result = await $.prompt.fill({ text });
+    const line = draftLine('triage');
+    const result = await $.prompt.fill({ text: line });
     if (!result.isFilled) throw new Error('Prompt could not be filled. Preserve the existing draft.');
+    drafted = { tag: line, context: text, job, snapshot: job.snapshot };
     if (!current(job) || job.phase !== 'completed' || (await fingerprint($, job)) !== job.snapshot) {
+      drafted = null;
       if (current(job)) { state = 'Code changed while drafting triage. The draft is historical; do not send it. Review again first.'; await notify($); }
       $.ui.toast('Triage draft is stale. Do not send it; review again first.');
       return;
@@ -601,7 +618,7 @@ async function askTriage($) {
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const retained = active && active.cwd === e.cwd ? active : null;
-    generation += 1; active?.timer?.cancel(); active = null; fixing = false; storageBlocked = false;
+    generation += 1; active?.timer?.cancel(); active = null; fixing = false; storageBlocked = false; drafted = null;
     cwd = e.cwd; intent = ''; target = 'origin/main'; findings = []; selected = 0; chosen = false; filter = 'all';
     context = null; preparing = false; edited = false; contextNote = ''; stamp = 0; unlocking = false;
     opened = { evidence: false, raw: false, suggestion: false, setup: false, diagnostics: false, previous: false };
@@ -647,6 +664,16 @@ export function register(on) {
     await recheck($);
     void prepare($);
     return {};
+  });
+  // Attaches a drafted request's instructions when its line is sent by the person; once only.
+  on('prompt.submit', async ($, e, next) => {
+    const d = drafted;
+    if (!d || e.origin?.kind !== 'composer' || typeof e.text !== 'string' || !e.text.includes(d.tag)) return next(e);
+    drafted = null;
+    let note = '';
+    try { if (!current(d.job) || (await fingerprint($, d.job)) !== d.snapshot) note = 'Note: the code changed after this Qodo review, so the finding data below may be outdated. Reassess against current code before acting.\n'; }
+    catch { note = 'Note: could not confirm the code is unchanged since this Qodo review. Reassess against current code before acting.\n'; }
+    return next({ ...e, context: [...(e.context ?? []), note + d.context] });
   });
   on('tool.call', async ($, e, next) => {
     // Reserved before the call so the gate and the snapshot predate Qodo reading the tree.

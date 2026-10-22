@@ -72,7 +72,20 @@ async function harness({ partial = false, stale = false, malformed = false, exis
     if (during) await during();
     return answer || { result: {}, text };
   });
-  return { $, calls, timers, draw, control, option, field, status, tool, submissions, completions: () => completions, filled: () => filled, registered: () => registered,
+  // Sends the composer draft as the person would and returns what the model reads: line + attached context.
+  const send = async (text = filled, origin = { kind: 'composer' }) => {
+    const submit = hooks.find(h => h.event === 'prompt.submit');
+    let seen = null;
+    await submit.fn($, { text, origin, wait: false }, async e => { seen = e; return { text: e.text, context: e.context }; });
+    return seen;
+  };
+  let delivered = null, deliveredFor = null;
+  const filledAll = async () => {
+    if (!filled) return '';
+    if (deliveredFor !== filled) { const seen = await send(); delivered = [seen.text, ...(seen.context || [])].join('\n'); deliveredFor = filled; }
+    return delivered;
+  };
+  return { $, calls, timers, draw, control, option, field, status, tool, submissions, completions: () => completions, box: () => filled, send, filled: filledAll, registered: () => registered,
     edit: () => { changed = true; }, setStatus: fn => { statusData = fn; },
     setConversation: rows => { conversation = rows; }, setAnswer: text => { answer = text; },
     sent: () => sent, stored: () => stored, quiet, reopen: async () => { await open(); await quiet(); },
@@ -201,13 +214,13 @@ test('stubbed contract collection and selected fix draft', async () => {
   assert.match(h.status(), /Completed: 1 new; none still open/);
   assert.equal(h.control('navigator').props.children.length, 1);
   await h.control('fix').props.onPress();
-  assert.match(h.filled(), /finding-1/);
-  assert.match(h.filled(), /mark implemented with the fix evidence/);
-  assert.match(h.filled(), /inspect every per-item write outcome/);
-  assert.match(h.filled(), /one short factual sentence/);
-  assert.match(h.filled(), /not mark implemented as a Qodo-driven fix/);
-  assert.match(h.filled(), /keep open and bring the concrete decision/);
-  assert.doesNotMatch(h.filled(), /Do not commit, push, dismiss/);
+  assert.match((await h.filled()), /finding-1/);
+  assert.match((await h.filled()), /mark implemented with the fix evidence/);
+  assert.match((await h.filled()), /inspect every per-item write outcome/);
+  assert.match((await h.filled()), /one short factual sentence/);
+  assert.match((await h.filled()), /not mark implemented as a Qodo-driven fix/);
+  assert.match((await h.filled()), /keep open and bring the concrete decision/);
+  assert.doesNotMatch((await h.filled()), /Do not commit, push, dismiss/);
 });
 for (const scenario of ['partial', 'stale', 'malformed', 'failed', 'existingDraft']) {
   test(scenario + ' never auto-fixes or overwrites a draft', async () => {
@@ -215,7 +228,7 @@ for (const scenario of ['partial', 'stale', 'malformed', 'failed', 'existingDraf
     h.field().props.onSubmit('Fix API validation');
     await h.control('review').props.onPress(); await h.timers[0]();
     if (h.control('fix')) await h.control('fix').props.onPress();
-    assert.equal(h.filled(), '');
+    assert.equal((await h.filled()), '');
     assert.match(h.status(), /Incomplete|Code changed since this review|Error/);
   });
 }
@@ -250,7 +263,7 @@ test('pane -> fix -> re-review -> updated pane', async () => {
   await h.control('review').props.onPress(); await h.timers[0]();
   assert.match(h.status(), /Completed: 1 new; none still open/);
   await h.control('fix').props.onPress();
-  assert.match(h.filled(), new RegExp('qodo review --base ' + base + ' --async --json'));
+  assert.match((await h.filled()), new RegExp('qodo review --base ' + base + ' --async --json'));
   // Claude edits the file during the fix workflow.
   h.edit();
   await h.tool({ tool: 'Edit' });
@@ -491,7 +504,7 @@ test('edits made after a Claude submission mark the collected result stale', asy
   // No enabled-looking fix action; the explanation stands in its place.
   assert.equal(h.control('fix'), undefined);
   assert.match(h.control('fix-unavailable').props.children, /^Fix requests are unavailable for a previous review/);
-  assert.equal(h.filled(), '');
+  assert.equal((await h.filled()), '');
 });
 
 test('a stale result leads with re-review, hides its findings and offers no fix or collection', async () => {
@@ -643,16 +656,65 @@ test('triage retains provenance and warns when filling races an edit', async () 
   const h = await populated([FINDING('fresh', 'action_required', 'Fresh')], [FINDING('old', 'action_required', 'Old')]);
   let closed = false;
   h.$.ui.close = async () => { closed = true; };
-  h.$.prompt.fill = async ({ text }) => {
-    const rows = JSON.parse(text.split('Findings:\n')[1]);
-    assert.equal(rows.find(f => f.id === 'old').carried, true);
-    assert.equal(rows.find(f => f.id === 'fresh').carried, false);
-    h.edit();
-    return { isFilled: true };
-  };
+  let line = '';
+  h.$.prompt.fill = async ({ text }) => { line = text; h.edit(); return { isFilled: true }; };
   await h.control('triage').props.onPress();
   assert.equal(closed, false);
   assert.match(h.status(), /draft is historical/);
+  // A stale triage draft attaches nothing when sent.
+  const seen = await h.send(line);
+  assert.equal(seen.context, undefined);
+});
+
+test('triage context keeps provenance of new and carried findings', async () => {
+  const h = await populated([FINDING('fresh', 'action_required', 'Fresh')], [FINDING('old', 'action_required', 'Old')]);
+  await h.control('triage').props.onPress();
+  const rows = JSON.parse((await h.filled()).split('Findings:\n')[1]);
+  assert.equal(rows.find(f => f.id === 'old').carried, true);
+  assert.equal(rows.find(f => f.id === 'fresh').carried, false);
+});
+
+test('fix request puts one readable line in the box and the finding data in hidden context', async () => {
+  const snippet = '+ if origin != "https://github.com/gvago/demo.git" or @everyone:\n+     raise ValueError("x")';
+  const h = await populated([{ id: 'f2050a7d-80c3', title: 'Hosted runs cannot publish an inbox', action_level: 'action_required', description: 'See https://example.com/x and @someone.', location: { file_path: 'tools/maintainer_inbox.py', start_line: 82, code_snippet: snippet } }]);
+  await h.control('fix').props.onPress();
+  // The composer holds no URL, no @, no JSON: nothing the host can mistake for a mention.
+  assert.equal(h.box(), 'Fix Qodo finding f2050a7d: Hosted runs cannot publish an inbox (tools/maintainer_inbox.py:82)');
+  assert.doesNotMatch(h.box(), /https?:|@|\{/);
+  const seen = await h.send();
+  assert.equal(seen.text, h.box());
+  assert.equal(seen.context.length, 1);
+  assert.match(seen.context[0], /Finding data:/);
+  assert.ok(seen.context[0].includes(JSON.stringify(snippet).slice(1, -1)), 'the snippet reaches the model verbatim');
+  // Attached once: sending the same line again carries nothing.
+  assert.equal((await h.send(h.box())).context, undefined);
+});
+
+test('a drafted fix attaches only to the person\'s own send of that line', async () => {
+  const h = await populated([FINDING('abcdef123456', 'action_required', 'Guard it')]);
+  await h.control('fix').props.onPress();
+  // An unrelated prompt or a plugin prompt does not consume the draft.
+  assert.equal((await h.send('unrelated question')).context, undefined);
+  assert.equal((await h.send(h.box(), { kind: 'plugin', name: 'other' })).context, undefined);
+  // The person may edit around the line; the tag still matches.
+  const seen = await h.send(h.box() + ' and keep the tests green');
+  assert.match(seen.context[0], /abcdef123456/);
+});
+
+test('a fix line sent after the code changed carries a staleness note', async () => {
+  const h = await populated([FINDING('abcdef123456', 'action_required', 'Guard it')]);
+  await h.control('fix').props.onPress();
+  h.edit();
+  const seen = await h.send();
+  assert.match(seen.context[0], /^Note: the code changed after this Qodo review/);
+});
+
+test('a session reset discards a drafted fix', async () => {
+  const h = await populated([FINDING('abcdef123456', 'action_required', 'Guard it')]);
+  await h.control('fix').props.onPress();
+  const line = h.box();
+  await h.restart('/work');
+  assert.equal((await h.send(line)).context, undefined);
 });
 
 test('fallback lookup invalidated by an edit never submits another model call', async () => {
@@ -1100,7 +1162,7 @@ test('repair: an unreadable context file leaves the intent unclaimed', async () 
   assert.match(h.control('operation').props.children, /op-7/);
   // Nothing Qodo did not receive is shown as this review's intent.
   await h.control('fix').props.onPress();
-  assert.doesNotMatch(h.filled(), /Change intent: .+/);
+  assert.doesNotMatch((await h.filled()), /Change intent: .+/);
 });
 
 test('repair: a thrown Bash call keeps the gate shut, because admission is unknown', async () => {
@@ -1324,7 +1386,7 @@ test('reconciliation: edit during prompt read prevents stale draft', async () =>
   await h.control('review').props.onPress(); await h.timers[0]();
   h.$.prompt.read = async () => { h.edit(); return { text: '' }; };
   await h.control('fix').props.onPress();
-  assert.equal(h.filled(), '');
+  assert.equal((await h.filled()), '');
 });
 test('reconciliation: running status replaces preparation notice', async () => {
   const h = await harness(), heard = []; h.$.ui.status = text => heard.push(text);

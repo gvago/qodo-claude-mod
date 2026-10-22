@@ -186,3 +186,37 @@ test('a context prepared after the pane is already mounted still reaches the inp
   expect((await ui.find({ key: 'intent-1' }))?.text).toBe('Add a Qodo review pane with clear finding navigation.\n\nPrepares editable review context from session goals and repository changes.')
   await ui.unmount()
 })
+
+test('fix button drafts one plain line; sending it attaches the finding as hidden context', async ($, on) => {
+  const snippet = '+ if origin != "https://github.com/gvago/demo.git":'
+  const finding = { ...FINDING, diffReference: undefined, location: { file_path: 'tools/inbox.py', start_line: 82, code_snippet: snippet } }
+  // The hash of the stubbed tree (empty HEAD, diff and untracked list), so the result is current.
+  const stored = { ...STORED, snapshot: '1563dc89d130288ded45a513dd73b4e941058298ff0a562d35bb44d95ac426ac', result: { ...STORED.result, findings: [finding] } }
+  let box = ''
+  let reached: { text: string; context?: readonly string[] } | null = null
+  on('session.start', () => ({ cwd: '/work' }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('store.get', () => ({ value: stored }))
+  on('store.set', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('prompt.read', () => ({ value: { text: box, cursor: box.length } }))
+  on('prompt.fill', (_$, e) => { box = e.text; return { isFilled: true } })
+  on('prompt.submit', (_$, e) => { reached = { text: e.text, context: e.context }; return { text: e.text, context: e.context } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.command.run({ command: 'qodo-pane', args: '', ...RUN })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'fix' })
+  for (let i = 0; i < 50 && !box; i++) await new Promise(r => setTimeout(r, 10))
+  await ui.unmount()
+  expect(box).toBe('Fix Qodo finding f-act: Reviews from another checkout enter the pane (tools/inbox.py:82)')
+  await $.prompt.submit({ text: box, wait: false, origin: { kind: 'composer' } })
+  expect(reached).not.toBeNull()
+  expect(reached!.text).toBe(box)
+  expect(reached!.context?.length).toBe(1)
+  expect(reached!.context![0]).toContain('Finding data:')
+  expect(reached!.context![0]).toContain('github.com/gvago/demo.git')
+})
