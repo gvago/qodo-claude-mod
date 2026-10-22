@@ -1,0 +1,64 @@
+[
+ {
+  "name": "broad-change-then-narrow-followup",
+  "expectation": "Covers the whole pane implementation, not only the bold status line.",
+  "turns": [
+   "Implement an unofficial Claude Code Qodo review pane: submit whole-working-tree reviews with change intent, display findings, draft a user-sent fix request.",
+   "make preparation status prominent, and avoid calling the implementation a scaffold."
+  ],
+  "pr": "",
+  "commits": "",
+  "diff": "# new file mods/qodo-review-pane/hooks/register.js\n// Qodo owns review/authentication; this module owns only the manual interface.\nconst PANE = 'qodo-review-pane';\nlet cwd = '', intent = '', target = 'origin/main', qodo = 'qodo';\nlet state = 'Idle: no review submitted.', findings = [], selected = 0, chosen = false;\n// Which collapsed sections the person has opened; setup opens itself while there is nothing to read.\nlet opened = { evidence: false, setup: false, diagnostics: false, previous: false };\n// Which findings the navigator lists: everything, this run's, or those carried from an earlier one.\nlet filter = 'all';\n// The prepared review context, keyed by checkout, base and tree; `edited` locks the field to you.\nlet context = null, preparing = false, edited = false, contextNote = '';\n// A field already on screen may keep the text it was mounted with, so an installed value gets a\n// fresh address and is drawn as a new element. Your own typing never bumps it, and never remounts.\nlet stamp = 0;\nfunction installIntent(text) { if (intent !== text) { intent = text; stamp += 1; } }\nlet active = null, generation = 0, fixing = false;\n\nfunction clean(value, max = 12000) {\n  return typeof value === 'string' ? value.replace(/[\\x00-\\x08\\x0b-\\x1f\\x7f]/g, '').slice(0, max) : '';\n}\nfunction object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }\nfunction parse(raw) {\n  const data = JSON.parse(raw);\n  if (!object(data)) throw new Error('Qodo returned a non-object result.');\n  return data;\n}\nfunction current(job) { return active === job && job.generation === generation && job.cwd === cwd; }\nfunction openFindings(data) {\n  if (!Array.isArray(data.findings)) throw new Error('Qodo result has no findings array.');\n  const items = Array.isArray(data.finding_state?.still_open) ? [...data.findings, ...data.finding_state.still_open] : data.findings;\n  if (items.length > 1000) throw new Error('More than 1000 findings: inspect the full CLI result.');\n  const seen = new Set();\n  return items.map(f => {\n    if (!object(f) || typeof f.id !== 'string' || !clean(f.title)) throw new Error('Malformed finding: missing id/title.');\n    return f;\n  }).filter(f => {\n    if (seen.has(f.id)) return false;\n    seen.add(f.id);\n    return !['dismissed', 'implemented', 'full_implementation', 'outdated', 'detected_after_merge'].includes(f.attribution_status);\n  });\n}\nfunction evidenceText(f) {\n  const evidence = object(f.evidence) ? f.evidence : {};\n  const citations = Array.isArray(evidence.citations) ? evidence.citations : Array.isArray(f.citations) ? f.citations : [];\n  const lines = [clean(evidence.explanation)];\n  for (const citation of citations) {\n    if (typeof citation === 'string') lines.push('- ' + clean(citation));\n    else if (object(citation)) {\n      const source = clean(citation.source || citation.source_ref || citation.url, 1000);\n      const text = clean(citation.text || citation.citation, 3000);\n      if (source) lines.push('- ' + source);\n      if (text && text !== 'TBD') lines.pus"
+ },
+ {
+  "name": "narrow-scope-inside-broad-session",
+  "expectation": "Describes only the one-file timeout change; must not claim the storage rewrite.",
+  "turns": [
+   "We spent the week rewriting the whole storage layer and the migration tooling.",
+   "Bump the collection poll timeout."
+  ],
+  "pr": "",
+  "commits": "",
+  "diff": "diff --git a/hooks/register.js b/hooks/register.js\n@@\n-    const response = await $.process.run([job.qodo, 'review', 'status', job.operation, '--json'], { cwd: job.cwd, timeoutMs: 30000 });\n+    const response = await $.process.run([job.qodo, 'review', 'status', job.operation, '--json'], { cwd: job.cwd, timeoutMs: 60000 });\n"
+ },
+ {
+  "name": "unrelated-recent-conversation",
+  "expectation": "Ignores the offsite/invoice chatter; summarises the secret-filter change.",
+  "turns": [
+   "Can you book the team offsite for March and chase the Acme invoice?",
+   "Also the printer on floor 3 is jammed again."
+  ],
+  "pr": "",
+  "commits": "",
+  "diff": "diff --git a/hooks/register.js b/hooks/register.js\n@@\n-const SECRET_LINE = /(api[_-]?key|secret|token)\\s*[:=]/i;\n+const SECRET_LINE = /(?:api[_-]?key|secret|token|password|bearer|credential)[\\w.-]*\\s*[:=]\\s*\\S/i;\n+  return parts.join('\\n').split('\\n').filter(line => !SECRET_LINE.test(line)).join('\\n');\n"
+ },
+ {
+  "name": "explicit-goal-correction",
+  "expectation": "Follows the correction: plugin store, not a new database.",
+  "turns": [
+   "Store each review result in a new SQLite table so we can query history.",
+   "Correction: do not add a database. Use the existing plugin store instead."
+  ],
+  "pr": "",
+  "commits": "",
+  "diff": "diff --git a/hooks/register.js b/hooks/register.js\n@@\n+async function save($, job, phase = job.phase) {\n+  if (current(job)) await $.store.set('operation:' + job.cwd, { operation: job.operation, base: job.base, result: job.result || null });\n+}\n"
+ },
+ {
+  "name": "empty-session-repo-evidence-only",
+  "expectation": "STATED should be NONE or drawn from the PR; INFERRED describes the denial gate.",
+  "turns": [],
+  "pr": "Refuse duplicate Qodo submissions\n\nWhile a review is active, a second supported submission should not run at all, so no duplicate review is paid for.",
+  "commits": "feat: deny a second supported review while one is active\nfix: reserve the gate before the first await",
+  "diff": "diff --git a/hooks/register.js b/hooks/register.js\n@@\n+  if (fixing || (active && !DONE.includes(active.phase))) return { deny: 'The Qodo review pane holds an active review of this checkout.' };\n+    if (reserved?.deny) return { deny: reserved.deny };\n"
+ },
+ {
+  "name": "two-independent-changes-conflicting-goal",
+  "expectation": "Should surface an AMBIGUITY: the stated goal covers only one of two unrelated changes.",
+  "turns": [
+   "Just rename the helper that resolves the comparison base, nothing else."
+  ],
+  "pr": "",
+  "commits": "",
+  "diff": "diff --git a/hooks/register.js b/hooks/register.js\n@@\n-function resolveBase(x) {\n+function comparisonBase(x) {\n@@\n-  let state = 'Idle';\n+  let state = 'Idle', findings = [], selected = 0, chosen = false;\n+  // whole new navigator, filter and stale view\n+  if (Select) children.push(Select({ key: 'navigator', options, value: String(selected) }));\n+  if (stale && findings.length) children.push(toggle('previous', 'Show previous review', opened.previous));\n"
+ }
+]

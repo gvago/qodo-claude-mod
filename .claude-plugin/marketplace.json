@@ -1,0 +1,16 @@
+{
+  "name": "qodo-unofficial",
+  "description": "Unofficial community mods for using Qodo inside Claude Code.",
+  "owner": {
+    "name": "Guy Vago",
+    "url": "https://github.com/gvago"
+  },
+  "plugins": [
+    {
+      "name": "qodo-review-pane",
+      "source": "./mods/qodo-review-pane",
+      "description": "Run Qodo reviews and work through findings in a Claude Code pane.",
+      "version": "0.2.0"
+    }
+  ]
+}

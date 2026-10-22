@@ -1,0 +1,6 @@
+*.bak
+*.bak.*
+__pycache__/
+.claude/
+**/.claude-plugin/types/
+**/tests/eval/results.json
