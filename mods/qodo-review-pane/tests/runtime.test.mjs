@@ -1302,7 +1302,8 @@ for (const route of ['pane', 'claude']) {
     release.resolve(); await run;
     await h.restart('/work');
     assert.ok(h.control('collect'));
-    assert.match(h.status(), /Retained review|outstanding/);
+    // A running record restored on reload is collected automatically; recovery stays available.
+    assert.match(h.status(), /Retained review|outstanding|Collecting review/);
   });
 }
 
@@ -1440,4 +1441,58 @@ test('reconciliation: tracked unusual filenames are passed literally to git', as
   const filename = 'tracked\nnameé.js';
   const h = await harness({ files: [filename], reads: { [filename]: 'changed implementation' } });
   assert.ok(h.calls.some(a => a[1] === 'diff' && a.at(-1) === filename));
+});
+
+test('an expired operation releases the gate instead of offering a collect that can never work', async () => {
+  const h = await restored('recoverable');
+  h.calls.length = 0;
+  const run = h.$.process.run;
+  h.$.process.run = async (argv, init) => argv[1] === 'review' && argv[2] === 'status'
+    ? { exitCode: 1, stdout: JSON.stringify({ error: { message: 'no such review — the id may never have existed, may belong to another user, or may have expired' } }), stderr: '' }
+    : run(argv, init);
+  await h.control('collect').props.onPress();
+  assert.match(h.status(), /expired on Qodo before it was collected/);
+  assert.equal(h.control('collect'), undefined);
+  assert.equal(h.stored()['operation:/work'].phase, 'failed');
+  // The gate is open again: Review changes submits.
+  h.field().props.onSubmit('Re-run after expiry');
+  await h.control('review').props.onPress();
+  assert.equal(h.submissions(), 1);
+});
+
+test('other collection errors keep the operation retained', async () => {
+  const h = await restored('recoverable');
+  const run = h.$.process.run;
+  h.$.process.run = async (argv, init) => argv[1] === 'review' && argv[2] === 'status'
+    ? { exitCode: 1, stdout: JSON.stringify({ error: { message: 'network unreachable' } }), stderr: '' }
+    : run(argv, init);
+  await h.control('collect').props.onPress();
+  assert.match(h.status(), /network unreachable[\s\S]*Operation retained: op-stored/);
+  assert.ok(h.control('collect'));
+});
+
+test('a review still running at reload is collected automatically', async () => {
+  const h = await harness();
+  h.$.store.get = async key => key.startsWith('operation:') ? { operation: 'op-run', base: 'a'.repeat(40), snapshot: 'hash', intent: 'I', qodo: 'qodo', phase: 'running', result: null } : undefined;
+  const before = h.timers.length;
+  await h.restart('/work');
+  assert.equal(h.timers.length, before + 1);
+  assert.match(h.status(), /Collecting review op-run submitted before this session reloaded/);
+});
+
+test('a restored handle that was never running does not poll by itself', async () => {
+  const h = await harness();
+  const before = h.timers.length;
+  h.$.store.get = async key => key.startsWith('operation:') ? { operation: 'op-x', base: 'a'.repeat(40), snapshot: 'hash', intent: 'I', qodo: 'qodo', phase: 'recoverable', result: null } : undefined;
+  await h.restart('/work');
+  assert.equal(h.timers.length, before);
+});
+
+test('an expired record restored on reload is closed, not offered for collection', async () => {
+  const h = await harness();
+  h.stored()['operation:/work'] = { operation: 'op-gone', base: 'a'.repeat(40), snapshot: 'hash', intent: 'I', qodo: 'qodo', phase: 'failed', result: null };
+  await h.restart('/work');
+  assert.match(h.status(), /expired before it was collected/);
+  assert.equal(h.control('collect'), undefined);
+  assert.equal(h.control('review').props.label, 'Review changes');
 });

@@ -1,4 +1,4 @@
-# Qodo Review Pane v0.2.1
+# Qodo Review Pane v0.2.2
 
 Unofficial Claude Code mod, not built or supported by Qodo. Manual Qodo review, readable finding details and a user-sent fix request. No automatic edits, commits, pushes, dismissals or PR writes.
 
@@ -23,7 +23,7 @@ While it runs, **Preparing review context…** sits directly under the pane's st
 
 Everything gathered is treated as untrusted source data to be summarised, never as instructions: it is fenced in the prompt and the system message says so. Every string that reaches the model — diff hunks, new files, pull request title and body, commit subjects — passes through one redaction choke point, so no source can be added that quietly skips it. It replaces assignment-shaped credential lines (quoted or bare) and netrc records with a marker, keeping the surrounding content; paths that imply a credential (.env, .netrc, .git-credentials, keys, npmrc) are named but never opened. A conversation turn containing a credential is dropped whole. **Only the distilled summary is sent to Qodo** — never the conversation, the pull request text or the gathered diff.
 
-Fill or adjust Change intent inside the pane, keep or change Target ref, activate Review changes. Qodo submits the working tree plus intent to the existing configured deployment. Closing the pane does not cancel the accepted operation. Collect review recovers the same operation rather than submitting again. Results expire server-side after one hour from completion.
+Fill or adjust Change intent inside the pane, keep or change Target ref, activate Review changes. Qodo submits the working tree plus intent to the existing configured deployment. Closing the pane does not cancel the accepted operation. Collect review recovers the same operation rather than submitting again. Results expire server-side about one hour after completion. A review accepted before a reload keeps being collected automatically. If Qodo no longer knows the operation (`no such review`), the pane says it expired, closes it and re-enables Review changes; other collection errors keep the operation for recovery.
 
 Ask Claude to fix drafts only one finding; you explicitly send it. The prompt box receives one plain line (`Fix Qodo finding <id>: <title> (<file>:<line>)`); the full instructions and finding data are attached as hidden context only when you send that line yourself, once. Raw finding text never enters the composer, so URLs and `@`-shaped strings in code snippets cannot be mistaken for mentions. If the code changed between drafting and sending, the attached context says so. Existing prompt drafts are preserved. Evidence renders explanation and source citations; suggested fix renders its description, not transport JSON or embedded server instructions.
 

@@ -382,7 +382,23 @@ async function collect($, job) {
       job.nextPoll = now + (Number.isFinite(delay) && delay > 0 ? delay : 15) * 1000;
       return;
     }
-    if (response.exitCode !== 0) throw new Error(clean(data.error?.message || response.stderr || 'Review failed or expired.'));
+    if (response.exitCode !== 0) {
+      const message = clean(data.error?.message || response.stderr || 'Review failed or expired.');
+      // Qodo answers a finished review for about an hour, then forgets it; a running one exits 2.
+      // An id this pane was handed at acceptance that Qodo no longer knows has expired: nothing is
+      // running or billing, and collecting again can never succeed, so release the gate.
+      if (/no such review/i.test(message)) {
+        job.timer?.cancel();
+        job.result = null;
+        await save($, job, 'failed');
+        if (!current(job)) return;
+        job.phase = 'failed';
+        state = 'Review ' + job.operation + ' expired on Qodo before it was collected (results are kept about 60 minutes after a review finishes). Nothing is running. Press Review changes to run a new one.';
+        await notify($);
+        return;
+      }
+      throw new Error(message);
+    }
     const items = openFindings(data);
     const partial = data.finding_state?.complete === false || data.meta?.coverage?.complete === false || data.meta?.superseded === true;
     const stale = job.changed || (await fingerprint($, job)) !== job.snapshot;
@@ -627,7 +643,9 @@ export function register(on) {
     let saved;
     try { saved = await $.store.get('operation:' + directory); }
     catch (error) { if (epoch === generation) { storageBlocked = true; state = 'Error: could not read saved review state: ' + clean(error.message) + '\nAny retained operation is not shown; recover it with qodo review status.'; } }
-    if (epoch === generation && directory === cwd && object(saved) && typeof saved.operation === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(saved.operation)) {
+    // An expired record is closed: restoring it would offer a collect that can never succeed.
+    if (epoch === generation && object(saved) && saved.phase === 'failed') state = 'Idle: the last review (' + clean(saved.operation, 200) + ') expired before it was collected.';
+    else if (epoch === generation && directory === cwd && object(saved) && typeof saved.operation === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(saved.operation)) {
       active = { generation, cwd, intent: clean(saved.intent, 4000), base: saved.base, snapshot: saved.snapshot, qodo: typeof saved.qodo === 'string' ? saved.qodo : qodo, operation: saved.operation, changed: !!saved.changed, phase: 'recoverable', timer: null, collecting: false, nextPoll: 0, deadline: 0 };
       intent = active.intent; state = 'Retained review: use Collect review before submitting another.';
       if (['completed', 'incomplete', 'stale'].includes(saved.phase) && object(saved.result)) {
@@ -652,6 +670,13 @@ export function register(on) {
           ? 'A review submitted before this session ended is still outstanding.\nOperation ' + operation + '. Collect it; do not submit another.'
           : 'A review submitted before this session ended may still be running, and no operation id was recorded.\nCheck with qodo review status before submitting again.';
       }
+    }
+    // A review accepted before a reload or restart keeps being collected; otherwise it can finish
+    // and expire on Qodo while the pane waits for a press nobody knows is needed.
+    if (epoch === generation && active?.operation && !active.result && ['accepted', 'running'].includes(saved?.phase) && active.operation === saved.operation) {
+      const job = active;
+      job.timer = $.clock.every(15000, async () => { await collect($, job); });
+      state = 'Collecting review ' + job.operation + ' submitted before this session reloaded. Do not submit another.';
     }
     if (storageBlocked && !active && retained?.operation) { active = { ...retained, generation, timer: null, collecting: false, phase: 'recoverable' }; state += '\nOperation retained in memory: ' + active.operation; }
     await $.command.register({ name: 'qodo-pane', description: 'Open Qodo findings (shortcut: /qp)', immediate: true });
@@ -699,7 +724,7 @@ export function register(on) {
     const stale = job?.phase === 'stale';
     // Collection is offered only for an operation whose result has not been read yet. A stale
     // result was already collected, and re-collecting the same operation cannot review new code.
-    const recovery = job?.operation && !['completed', 'incomplete', 'stale'].includes(job.phase);
+    const recovery = job?.operation && !DONE.includes(job.phase);
     const collector = () => Button({ key: 'collect', label: 'Collect review ' + job.operation, variant: recovery ? 'primary' : 'secondary', onPress: async () => { job.deadline = 0; await collect($, job); } });
     const toggle = (key, label, isOpen) => Button({ key: key + '-toggle', label: (isOpen ? '▾ ' : '▸ ') + label + (isOpen ? ' (expanded)' : ' (collapsed)'), plain: true, onPress: () => { opened = { ...opened, [key]: !isOpen }; $.ui.invalidate('ui.render'); } });
     const children = [Text({ key: 'state', children: state, bold: true, wrap: 'wrap' })];
@@ -827,7 +852,7 @@ export function register(on) {
       if (opened.diagnostics) {
         children.push(Text({ key: 'operation', dimColor: true, wrap: 'wrap', children: 'Operation ' + job.operation + ' · ' + job.phase + (job.base ? ' · base ' + job.base.slice(0, 12) : '') + (job.changed ? ' · tree changed after submission' : '') }));
         // Collection recovers an unread result; a result already in hand is never re-collected.
-        if (!recovery && !job.result) children.push(collector());
+        if (!recovery && !job.result && job.phase !== 'failed') children.push(collector());
       }
     }
     children.push(Button({ key: 'close', label: 'Close pane', role: 'dismiss', plain: true, onPress: async () => { await $.ui.close({ id: PANE }); } }));
